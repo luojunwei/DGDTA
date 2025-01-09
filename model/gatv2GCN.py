@@ -1,14 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GATv2Conv, global_mean_pool as gap, global_max_pool as gmp
-
+from torch_geometric.nn import GATv2Conv, global_mean_pool as gap, global_max_pool as gmp, GCNConv
 
 class GraphConvolutionalBlock(nn.Module):
     def __init__(self, input_dim, output_dim, dropout_rate):
         super(GraphConvolutionalBlock, self).__init__()
         self.gatv2_layer1 = GATv2Conv(input_dim, output_dim, heads=10, dropout=dropout_rate)
-        self.gatv2_layer2 = GATv2Conv(output_dim * 10, output_dim * 10, dropout=dropout_rate)
+        self.gatv2_layer2 = GCNConv(output_dim * 10, output_dim * 10, dropout=dropout_rate)
         self.activation = nn.ReLU()
         self.dropout = nn.Dropout(dropout_rate)
 
@@ -54,10 +53,10 @@ class CombinedDenseBlock(nn.Module):
         x = self.dropout(x)
         return self.output_layer(x)
 
-class GATv2Model(nn.Module):
+class GATv2GCNModel(nn.Module):
     def __init__(self, output_size=1, xd_features=78, xt_features=25,
                  filter_count=32, embedding_dim=128, dense_output_dim=128, dropout_rate=0.2):
-        super(GATv2Model, self).__init__()
+        super(GATv2GCNModel, self).__init__()
         self.graph_block = GraphConvolutionalBlock(xd_features, xd_features, dropout_rate)
         self.protein_block = ProteinSequenceBlock(xt_features, embedding_dim, filter_count, dense_output_dim)
         self.combined_block = CombinedDenseBlock(256, output_size, dropout_rate)
