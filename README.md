@@ -25,14 +25,14 @@ conda deactivate
 ```bash
 git clone https://github.com/luojunwei/DGDTA.git
 cd DGDTA
-``` 
+```
 #### 3. Install
 
 ```bash
 conda activate DGDTA
 conda install numpy, scipy, pandas, Pytorch, pyg
 
-``` 
+```
 
 
 
@@ -58,7 +58,7 @@ First, divide the data into training and test sets and create data files in pyto
 
 Run the following script to train the model.
 ```bash
-python training2.py
+python main.py
 
 ```
 The default values of the parameter parser are the DGDTA-CL version and the KIBA dataset.
@@ -68,7 +68,7 @@ The default values of the parameter parser are the DGDTA-CL version and the KIBA
 
 Run the following script to test the model.
 ```bash
-python training_validation.py 
+python validation.py
 
 ```
 This returns the best MSE model for the validation dataset during the training process.

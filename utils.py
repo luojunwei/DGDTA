@@ -10,8 +10,6 @@ class TestbedDataset(InMemoryDataset):
     def __init__(self, root='/tmp', dataset='davis', 
                  xd=None, xt=None, y=None, transform=None,
                  pre_transform=None,smile_graph=None):
-
-        #root is required for save preprocessed data, default is '/tmp'
         super(TestbedDataset, self).__init__(root, transform, pre_transform)
         # benchmark dataset, default = 'davis'
         self.dataset = dataset
@@ -50,15 +48,12 @@ class TestbedDataset(InMemoryDataset):
             smiles = xd[i]
             target = xt[i]
             labels = y[i]
-            # convert SMILES to molecular representation using rdkit
             c_size, features, edge_index = smile_graph[smiles]
-            # make the graph ready for PyTorch Geometrics GCN algorithms:
             GCNData = DATA.Data(x=torch.Tensor(features),
                                 edge_index=torch.LongTensor(edge_index).transpose(1, 0),
                                 y=torch.FloatTensor([labels]))
             GCNData.target = torch.LongTensor([target])
             GCNData.__setitem__('c_size', torch.LongTensor([c_size]))
-            # append graph, label and target sequence to data list
             data_list.append(GCNData)
 
         if self.pre_filter is not None:
@@ -68,7 +63,6 @@ class TestbedDataset(InMemoryDataset):
             data_list = [self.pre_transform(data) for data in data_list]
         print('Graph construction done. Saving to file.')
         data, slices = self.collate(data_list)
-        # save preprocessed data:
         torch.save((data, slices), self.processed_paths[0])
 
 def rmse(y,f):

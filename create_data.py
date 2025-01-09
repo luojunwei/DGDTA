@@ -1,139 +1,114 @@
-import pandas as pd
-import numpy as np
 import os
-import json,pickle
+import json
+import pickle
+import numpy as np
+import pandas as pd
 from collections import OrderedDict
 from rdkit import Chem
-from rdkit.Chem import MolFromSmiles
 import networkx as nx
 from utils import *
 
-def atom_features(atom):
-    return np.array(one_of_k_encoding_unk(atom.GetSymbol(), ['C', 'N', 'O', 'S', 'F', 'Si', 'P', 'Cl', 'Br', 'Mg', 'Na', 'Ca', 'Fe', 'As', 'Al', 'I', 'B', 'V', 'K', 'Tl', 'Yb', 'Sb', 'Sn', 'Ag', 'Pd', 'Co', 'Se', 'Ti', 'Zn', 'H', 'Li', 'Ge', 'Cu', 'Au', 'Ni', 'Cd', 'In', 'Mn', 'Zr','Cr', 'Pt', 'Hg', 'Pb', 'Unknown']) +
-                    one_of_k_encoding(atom.GetDegree(), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) +
-                    one_of_k_encoding_unk(atom.GetTotalNumHs(), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) +
-                    one_of_k_encoding_unk(atom.GetImplicitValence(), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) +
-                    [atom.GetIsAromatic()])
+def get_atom_features(atom):
+    return np.array(
+        encode_one_hot_unknown(atom.GetSymbol(), ['C', 'N', 'O', 'S', 'F', 'Si', 'P', 'Cl', 'Br', 'Mg', 'Na', 'Ca', 'Fe', 
+                                                  'As', 'Al', 'I', 'B', 'V', 'K', 'Tl', 'Yb', 'Sb', 'Sn', 'Ag', 'Pd', 
+                                                  'Co', 'Se', 'Ti', 'Zn', 'H', 'Li', 'Ge', 'Cu', 'Au', 'Ni', 'Cd', 
+                                                  'In', 'Mn', 'Zr', 'Cr', 'Pt', 'Hg', 'Pb', 'Unknown']) +
+        encode_one_hot(atom.GetDegree(), list(range(11))) +
+        encode_one_hot_unknown(atom.GetTotalNumHs(), list(range(11))) +
+        encode_one_hot_unknown(atom.GetImplicitValence(), list(range(11))) +
+        [atom.GetIsAromatic()]
+    )
 
-def one_of_k_encoding(x, allowable_set):
-    if x not in allowable_set:
-        raise Exception("input {0} not in allowable set{1}:".format(x, allowable_set))
-    return list(map(lambda s: x == s, allowable_set))
+def encode_one_hot(value, allowable_set):
+    if value not in allowable_set:
+        raise ValueError(f"Input {value} not in allowable set {allowable_set}")
+    return [value == s for s in allowable_set]
 
-def one_of_k_encoding_unk(x, allowable_set):
-    """Maps inputs not in the allowable set to the last element."""
-    if x not in allowable_set:
-        x = allowable_set[-1]
-    return list(map(lambda s: x == s, allowable_set))
+def encode_one_hot_unknown(value, allowable_set):
+    if value not in allowable_set:
+        value = allowable_set[-1]
+    return [value == s for s in allowable_set]
 
-def smile_to_graph(smile):
+def convert_smile_to_graph(smile):
     mol = Chem.MolFromSmiles(smile)
-    
-    c_size = mol.GetNumAtoms()
-    
-    features = []
-    for atom in mol.GetAtoms():
-        feature = atom_features(atom)
-        features.append( feature / sum(feature) )
+    atom_count = mol.GetNumAtoms()
+    features = [get_atom_features(atom) / sum(get_atom_features(atom)) for atom in mol.GetAtoms()]
 
-    edges = []
-    for bond in mol.GetBonds():
-        edges.append([bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()])
-    g = nx.Graph(edges).to_directed()
-    edge_index = []
-    for e1, e2 in g.edges:
-        edge_index.append([e1, e2])
-        
-    return c_size, features, edge_index
+    edges = [[bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()] for bond in mol.GetBonds()]
+    graph = nx.Graph(edges).to_directed()
+    edge_index = [[e1, e2] for e1, e2 in graph.edges]
 
-def seq_cat(prot):
-    x = np.zeros(max_seq_len)
-    for i, ch in enumerate(prot[:max_seq_len]): 
-        x[i] = seq_dict[ch]
-    return x  
+    return atom_count, features, edge_index
 
+def encode_sequence(protein):
+    encoded_seq = np.zeros(max_sequence_length)
+    for i, char in enumerate(protein[:max_sequence_length]):
+        encoded_seq[i] = sequence_dict[char]
+    return encoded_seq
 
-# from DeepDTA data
-all_prots = []
-datasets = ['kiba', 'davis']
-for dataset in datasets:
-    print('convert data from DeepDTA for ', dataset)
-    fpath = 'data/' + dataset + '/'
-    train_fold = json.load(open(fpath + "folds/train_fold_setting1.txt"))
-    train_fold = [ee for e in train_fold for ee in e ]
-    valid_fold = json.load(open(fpath + "folds/test_fold_setting1.txt"))
-    ligands = json.load(open(fpath + "ligands_can.txt"), object_pairs_hook=OrderedDict)
-    proteins = json.load(open(fpath + "proteins.txt"), object_pairs_hook=OrderedDict)
-    affinity = pickle.load(open(fpath + "Y","rb"), encoding='latin1')
-    drugs = []
-    prots = []
-    for d in ligands.keys():
-        lg = Chem.MolToSmiles(Chem.MolFromSmiles(ligands[d]),isomericSmiles=True)
-        drugs.append(lg)
-    for t in proteins.keys():
-        prots.append(proteins[t])
-    if dataset == 'davis':
-        affinity = [-np.log10(y/1e9) for y in affinity]
-    affinity = np.asarray(affinity)
-    opts = ['train', 'test']
-    for opt in opts:
-        rows, cols = np.where(np.isnan(affinity)==False)
-        if opt == 'train':
-            rows, cols = rows[train_fold], cols[train_fold]
-        elif opt == 'test':
-            rows, cols = rows[valid_fold], cols[valid_fold]
-        with open('data/' + dataset + '_' + opt + '.csv', 'w') as f:
-            f.write('compound_iso_smiles,target_sequence,affinity\n')
-            for pair_ind in range(len(rows)):
-                ls = []
-                ls += [drugs[rows[pair_ind]]]
-                ls += [prots[cols[pair_ind]]]
-                ls += [affinity[rows[pair_ind], cols[pair_ind]]]
-                f.write(','.join(map(str,ls)) + '\n')       
-    print('\ndataset:', dataset)
-    print('train_fold:', len(train_fold))
-    print('test_fold:', len(valid_fold))
-    print('len(set(drugs)),len(set(prots)):', len(set(drugs)), len(set(prots)))
-    all_prots += list(set(prots))
-    
-    
-seq_voc = "ABCDEFGHIKLMNOPQRSTUVWXYZ"
-seq_dict = {v:(i+1) for i,v in enumerate(seq_voc)}
-seq_dict_len = len(seq_dict)
-max_seq_len = 1000
+def process_dataset(dataset_name):
+    print(f'Converting data from DeepDTA for {dataset_name}')
+    data_path = f'data/{dataset_name}/'
+    train_indices = json.load(open(data_path + "folds/train_fold_setting1.txt"))
+    train_indices = [idx for sublist in train_indices for idx in sublist]
+    test_indices = json.load(open(data_path + "folds/test_fold_setting1.txt"))
+    ligands = json.load(open(data_path + "ligands_can.txt"), object_pairs_hook=OrderedDict)
+    proteins = json.load(open(data_path + "proteins.txt"), object_pairs_hook=OrderedDict)
+    affinities = pickle.load(open(data_path + "Y", "rb"), encoding='latin1')
 
-compound_iso_smiles = []
-for dt_name in ['kiba', 'davis']:
-    opts = ['train', 'test']
-    for opt in opts:
-        df = pd.read_csv('data/' + dt_name + '_' + opt + '.csv')
-        compound_iso_smiles += list(df['compound_iso_smiles'])
-compound_iso_smiles = set(compound_iso_smiles)
-smile_graph = {}
-for smile in compound_iso_smiles:
-    g = smile_to_graph(smile)
-    smile_graph[smile] = g
+    if dataset_name == 'davis':
+        affinities = [-np.log10(y / 1e9) for y in affinities]
+    affinities = np.asarray(affinities)
 
-datasets = ['davis','kiba']
-# convert to PyTorch data format
-for dataset in datasets:
-    processed_data_file_train = 'data/processed/' + dataset + '_train.pt'
-    processed_data_file_test = 'data/processed/' + dataset + '_test.pt'
-    if ((not os.path.isfile(processed_data_file_train)) or (not os.path.isfile(processed_data_file_test))):
-        df = pd.read_csv('data/' + dataset + '_train.csv')
-        train_drugs, train_prots,  train_Y = list(df['compound_iso_smiles']), list(df['target_sequence']), list(df['affinity'])
-        XT = [seq_cat(t) for t in train_prots]
-        train_drugs, train_prots,  train_Y = np.asarray(train_drugs), np.asarray(XT), np.asarray(train_Y)
-        df = pd.read_csv('data/' + dataset + '_test.csv')
-        test_drugs, test_prots,  test_Y = list(df['compound_iso_smiles']), list(df['target_sequence']), list(df['affinity'])
-        XT = [seq_cat(t) for t in test_prots]
-        test_drugs, test_prots,  test_Y = np.asarray(test_drugs), np.asarray(XT), np.asarray(test_Y)
+    for phase in ['train', 'test']:
+        rows, cols = np.where(~np.isnan(affinities))
+        if phase == 'train':
+            rows, cols = rows[train_indices], cols[train_indices]
+        elif phase == 'test':
+            rows, cols = rows[test_indices]
 
-        # make data PyTorch Geometric ready
-        print('preparing ', dataset + '_train.pt in pytorch format!')
-        train_data = TestbedDataset(root='data', dataset=dataset+'_train', xd=train_drugs, xt=train_prots, y=train_Y,smile_graph=smile_graph)
-        print('preparing ', dataset + '_test.pt in pytorch format!')
-        test_data = TestbedDataset(root='data', dataset=dataset+'_test', xd=test_drugs, xt=test_prots, y=test_Y,smile_graph=smile_graph)
-        print(processed_data_file_train, ' and ', processed_data_file_test, ' have been created')        
+        with open(f'data/{dataset_name}_{phase}.csv', 'w') as file:
+            file.write('compound_iso_smiles,target_sequence,affinity\n')
+            for pair_index in range(len(rows)):
+                compound_smile = Chem.MolToSmiles(Chem.MolFromSmiles(ligands[rows[pair_index]]), isomericSmiles=True)
+                target_sequence = proteins[cols[pair_index]]
+                affinity_value = affinities[rows[pair_index], cols[pair_index]]
+                file.write(f'{compound_smile},{target_sequence},{affinity_value}\n')
+
+    print(f'\nDataset: {dataset_name}')
+    print(f'Train fold size: {len(train_indices)}')
+    print(f'Test fold size: {len(test_indices)}')
+    print(f'Unique drugs: {len(set(ligands.values()))}, Unique proteins: {len(set(proteins.values()))}')
+
+sequence_vocabulary = "ABCDEFGHIKLMNOPQRSTUVWXYZ"
+sequence_dict = {char: (i + 1) for i, char in enumerate(sequence_vocabulary)}
+max_sequence_length = 1000
+
+compound_smiles = set()
+for dataset in ['kiba', 'davis']:
+    for phase in ['train', 'test']:
+        df = pd.read_csv(f'data/{dataset}_{phase}.csv')
+        compound_smiles.update(df['compound_iso_smiles'])
+
+smile_graphs = {smile: convert_smile_to_graph(smile) for smile in compound_smiles}
+
+for dataset in ['davis', 'kiba']:
+    train_file = f'data/processed/{dataset}_train.pt'
+    test_file = f'data/processed/{dataset}_test.pt'
+    if not (os.path.isfile(train_file) and os.path.isfile(test_file)):
+        train_df = pd.read_csv(f'data/{dataset}_train.csv')
+        train_drugs, train_proteins, train_affinities = train_df['compound_iso_smiles'], train_df['target_sequence'], train_df['affinity']
+        train_proteins_encoded = [encode_sequence(protein) for protein in train_proteins]
+
+        test_df = pd.read_csv(f'data/{dataset}_test.csv')
+        test_drugs, test_proteins, test_affinities = test_df['compound_iso_smiles'], test_df['target_sequence'], test_df['affinity']
+        test_proteins_encoded = [encode_sequence(protein) for protein in test_proteins]
+
+        print(f'Preparing {dataset}_train.pt in PyTorch format!')
+        train_data = TestbedDataset(root='data', dataset=f'{dataset}_train', xd=train_drugs, xt=train_proteins_encoded, y=train_affinities, smile_graph=smile_graphs)
+        print(f'Preparing {dataset}_test.pt in PyTorch format!')
+        test_data = TestbedDataset(root='data', dataset=f'{dataset}_test', xd=test_drugs, xt=test_proteins_encoded, y=test_affinities, smile_graph=smile_graphs)
+        print(f'{train_file} and {test_file} have been created')
     else:
-        print(processed_data_file_train, ' and ', processed_data_file_test, ' are already created')        
+        print(f'{train_file} and {test_file} are already created')
